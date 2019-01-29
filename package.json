@@ -6,5 +6,9 @@
   "bin": "cli.js",
   "repository": "https://github.com/sokra/node-voo",
   "author": "Tobias Koppers <tobias.koppers@googlemail.com>",
-  "license": "MIT"
+  "license": "MIT",
+  "files": [
+    "index.js",
+    "cli.js"
+  ]
 }
