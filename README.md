@@ -73,6 +73,6 @@ It's only possible to pass options via environment variables:
   - a Voo is restored (including count and size info)
   - a Voo is persisted (including count and size info)
   - the process exit and all Voos are persisted (including timing info)
-- `NODE_VOO_CACHE_ONLY=true`: Already use the cache and never check if real files have changed
+- `NODE_VOO_CACHE_ONLY=true`: Always use the cache and never check if real files have changed
 - `NODE_VOO_NO_PERSIST=true`: Never persist Voos (Use only when cache files already reached the optimum)
 - `NODE_VOO_PERSIST_LIMIT=<number>`: Time limit in milliseconds, how long node-voo persists Voos on process exit
