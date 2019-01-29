@@ -1,0 +1,10 @@
+{
+  "name": "node-voo",
+  "version": "0.1.0",
+  "description": "Source Caching for Node.js",
+  "main": "index.js",
+  "bin": "cli.js",
+  "repository": "https://github.com/sokra/node-voo",
+  "author": "Tobias Koppers <tobias.koppers@googlemail.com>",
+  "license": "MIT"
+}
