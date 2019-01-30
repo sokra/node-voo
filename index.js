@@ -1,12 +1,16 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const Module = require("module");
 
-const HEADER_SIZE = 28;
+const HEADER_SIZE = 32;
+const FORMAT_VERSION = 3;
 
 const loglevel = process.env.NODE_VOO_LOGLEVEL;
 const log = { $warning: 1, $info: 2, $verbose: 3 }["$" + loglevel] | 0;
 
+const trustYarn = !!process.env.NODE_VOO_YARN;
+const trustNpm = !!process.env.NODE_VOO_NPM;
 const cacheOnly = !!process.env.NODE_VOO_CACHE_ONLY;
 const noPersist = !!process.env.NODE_VOO_NO_PERSIST;
 const persistLimit = +process.env.NODE_VOO_PERSIST_LIMIT || 100;
@@ -28,8 +32,49 @@ const getHash = str => {
 		hashBuf[x] += c;
 		x = (x + i + c) % HASH_LENGTH;
 	}
-	return hashBuf.toString("hex");
+	return hashBuf;
 };
+
+// Find root node_modules
+let myBase, myNodeModules;
+const dirnameMatch = /((?:\/\.config\/yarn\/|\\Yarn\\Data\\)(?:link|global)|\/usr\/local\/lib|\\nodejs)?[/\\]node_modules[/\\]/.exec(
+	__dirname
+);
+if (dirnameMatch && !dirnameMatch[1]) {
+	myBase = __dirname.slice(0, dirnameMatch.index);
+	if (fs.existsSync(path.join(myBase, "package.json"))) {
+		myNodeModules = path.join(myBase, "node_modules");
+	}
+}
+if (!myNodeModules) {
+	let last;
+	myBase = process.cwd();
+	while (myBase !== last) {
+		if (fs.existsSync(path.join(myBase, "package.json"))) break;
+		last = myBase;
+		myBase = path.dirname(myBase);
+	}
+	myNodeModules = path.join(myBase, "node_modules");
+}
+
+// Read integrity file
+let nodeModulesIntegrity;
+if (trustNpm && myNodeModules) {
+	try {
+		nodeModulesIntegrity = Buffer.from(
+			getHash(fs.readFileSync(path.join(myBase, "package-lock.json"), "utf-8"))
+		);
+	} catch (e) {}
+}
+if (trustYarn && myNodeModules) {
+	try {
+		nodeModulesIntegrity = Buffer.from(
+			getHash(
+				fs.readFileSync(path.join(myNodeModules, ".yarn-integrity"), "utf-8")
+			)
+		);
+	} catch (e) {}
+}
 
 const stripBOM = content => {
 	if (content.charCodeAt(0) === 0xfeff) {
@@ -83,12 +128,7 @@ const makeRequireFunction = module => {
 	const Module = module.constructor;
 
 	function require(path) {
-		try {
-			exports.requireDepth += 1;
-			return module.require(path);
-		} finally {
-			exports.requireDepth -= 1;
-		}
+		return module.require(path);
 	}
 
 	function resolve(request, options) {
@@ -126,23 +166,59 @@ const writeSync = (fd, buffer) => {
 	} while (true);
 };
 
-const cache = new Map();
+const readInfoAndData = (file, start, count, valueFn, targetMap) => {
+	let pos = start + count * 8;
+	for (let i = 0; i < count; i++) {
+		const keyLength = file.readInt32LE(start + i * 8, true);
+		const valueLength = file.readInt32LE(start + 4 + i * 8, true);
+		const key = file.slice(pos, pos + keyLength).toString("utf-8");
+		pos += keyLength;
+		const value = valueFn(file.slice(pos, pos + valueLength));
+		pos += valueLength;
+		targetMap.set(key, value);
+	}
+	return pos;
+};
+
+const writeInfoAndData = (fd, map, valueFn) => {
+	const info = Buffer.allocUnsafe(map.size * 8);
+	const buffers = [info];
+	let pos = 0;
+	for (const [key, value] of map) {
+		const keyBuffer = Buffer.from(key, "utf-8");
+		const valueBuffer = valueFn(value);
+		info.writeInt32LE(keyBuffer.length, pos);
+		pos += 4;
+		info.writeInt32LE(valueBuffer.length, pos);
+		pos += 4;
+		buffers.push(keyBuffer, valueBuffer);
+	}
+	for (const buffer of buffers) {
+		writeSync(fd, buffer);
+	}
+};
+
+const resolveCache = new Map();
+const moduleToVoo = new Map();
 const allVoos = [];
 
 class Voo {
 	constructor(name) {
 		this.name = name;
-		this.filename = path.join(cacheDir, getHash(name));
+		this.filename = path.join(cacheDir, getHash(name).toString("hex"));
 		this.created = Date.now() / 1000;
 		this.started = 0;
 		this.lifetime = 0;
 		this.modules = new Map();
+		this.resolve = new Map();
 		this.timeout = undefined;
 		this.currentModules = new Set();
 		this.scriptSource = undefined;
 		this.scriptSourceBuffer = undefined;
 		this.script = undefined;
 		this.restored = false;
+		this.integrityMatches = false;
+		this.cache = new Map();
 	}
 
 	persist() {
@@ -163,35 +239,28 @@ class Voo {
 		const fd = fs.openSync(this.filename, "w");
 		const header = Buffer.allocUnsafe(HEADER_SIZE);
 		const nameBuffer = Buffer.from(this.name, "utf-8");
-		header.writeInt32LE(2, 0, true); // version
+		header.writeInt32LE(FORMAT_VERSION, 0, true);
 		header.writeDoubleLE(this.created, 4, true);
 		header.writeInt32LE(this.lifetime, 8, true);
 		header.writeInt32LE(nameBuffer.length, 12, true);
 		header.writeInt32LE(this.modules.size, 16, true);
 		header.writeInt32LE(scriptSource ? scriptSource.length : 0, 20, true);
 		header.writeInt32LE(cachedData ? cachedData.length : 0, 24, true);
+		header.writeInt32LE(this.resolve.size, 28, true);
 		writeSync(fd, header);
 		writeSync(fd, nameBuffer);
-		const moduleInfo = Buffer.allocUnsafe(this.modules.size * 8);
-		const buffers = [moduleInfo];
-		let pos = 0;
-		for (const [filename, source] of this.modules) {
-			const filenameBuffer = Buffer.from(filename, "utf-8");
-			moduleInfo.writeInt32LE(filenameBuffer.length, pos);
-			pos += 4;
-			moduleInfo.writeInt32LE(source.length, pos);
-			pos += 4;
-			buffers.push(filenameBuffer, source);
-		}
-		for (const buffer of buffers) {
-			writeSync(fd, buffer);
-		}
+		writeSync(
+			fd,
+			nodeModulesIntegrity || Buffer.allocUnsafe(HASH_LENGTH).fill(0)
+		);
+		writeInfoAndData(fd, this.modules, v => v);
 		if (scriptSource) {
 			writeSync(fd, scriptSource);
 		}
 		if (cachedData) {
 			writeSync(fd, cachedData);
 		}
+		writeInfoAndData(fd, this.resolve, str => Buffer.from(str, "utf-8"));
 		fs.closeSync(fd);
 		if (log >= 3) {
 			console.log(
@@ -206,7 +275,7 @@ class Voo {
 			const file = fs.readFileSync(this.filename);
 			if (file.length < HEADER_SIZE)
 				throw new Error("Incorrect cache file size");
-			if (file.readInt32LE(0, true) !== 2)
+			if (file.readInt32LE(0, true) !== FORMAT_VERSION)
 				throw new Error("Incorrect cache file version");
 			this.created = file.readInt32LE(4, true);
 			this.lifetime = file.readInt32LE(8, true);
@@ -214,31 +283,20 @@ class Voo {
 			const numberOfModules = file.readInt32LE(16, true);
 			const scriptSourceSize = file.readInt32LE(20, true);
 			const cachedDataSize = file.readInt32LE(24, true);
-			if (file.length < HEADER_SIZE + nameSize + numberOfModules * 8) {
-				throw new Error("Incorrect cache file size");
-			}
-			const name = file
-				.slice(HEADER_SIZE, HEADER_SIZE + nameSize)
-				.toString("utf-8");
+			const numberOfResolveEntries = file.readInt32LE(28, true);
+			let pos = HEADER_SIZE;
+			const name = file.slice(pos, pos + nameSize).toString("utf-8");
+			pos += nameSize;
 			if (name !== this.name) {
 				throw new Error("Hash conflict");
 			}
-			let modulesListStart = HEADER_SIZE + nameSize;
-			let pos = modulesListStart + numberOfModules * 8;
-			for (let i = 0; i < numberOfModules; i++) {
-				const filenameLength = file.readInt32LE(modulesListStart + i * 8, true);
-				const sourceLength = file.readInt32LE(
-					modulesListStart + 4 + i * 8,
-					true
-				);
-				const filename = file
-					.slice(pos, pos + filenameLength)
-					.toString("utf-8");
-				pos += filenameLength;
-				const source = file.slice(pos, pos + sourceLength);
-				pos += sourceLength;
-				this.modules.set(filename, source);
+			let integrityMatches = cacheOnly;
+			if (!integrityMatches && nodeModulesIntegrity) {
+				const hash = file.slice(pos, pos + HASH_LENGTH);
+				integrityMatches = Buffer.compare(hash, nodeModulesIntegrity) === 0;
 			}
+			pos += HASH_LENGTH;
+			pos = readInfoAndData(file, pos, numberOfModules, v => v, this.modules);
 			let scriptSourceBuffer;
 			if (scriptSourceSize > 0) {
 				scriptSourceBuffer = file.slice(pos, pos + scriptSourceSize);
@@ -251,7 +309,19 @@ class Voo {
 			let cachedData = undefined;
 			if (cachedDataSize > 0) {
 				cachedData = file.slice(pos, pos + cachedDataSize);
-				pos += scriptSourceSize;
+				pos += cachedDataSize;
+			}
+			if (integrityMatches) {
+				readInfoAndData(
+					file,
+					pos,
+					numberOfResolveEntries,
+					buf => buf.toString("utf-8"),
+					this.resolve
+				);
+				this.integrityMatches = true;
+			} else {
+				this.lifetime = 0;
 			}
 
 			this.script = new vm.Script(this.scriptSource, {
@@ -269,12 +339,16 @@ class Voo {
 			// File cache with data
 			if (this.modules.size === 1) {
 				const [filename, source] = this.modules.entries().next().value;
-				cache.set(filename, { source, fn: result });
+				this.cache.set(filename, result);
 			} else {
 				for (const [filename, source] of this.modules) {
 					const fn = result["$" + filename];
-					cache.set(filename, { source, fn });
+					this.cache.set(filename, fn);
 				}
+			}
+
+			for (const [key, result] of this.resolve) {
+				resolveCache.set(key, result);
 			}
 
 			this.restored = true;
@@ -290,7 +364,7 @@ class Voo {
 		} catch (e) {
 			if (e.code !== "ENOENT") {
 				if (log >= 1) {
-					console.log(`[node-voo] ${this.name} failed to restore: ${e}`);
+					console.log(`[node-voo] ${this.name} failed to restore: ${e.stack}`);
 				}
 			} else {
 				if (log >= 2) {
@@ -397,14 +471,34 @@ class Voo {
 		return !this.restored || this.modules.has(filename);
 	}
 
-	track(filename, source) {
-		if (source) {
-			this.modules.set(filename, source);
-			this.scriptSource = undefined;
-			this.scriptSourceBuffer = undefined;
-			this.lifetime = 0;
+	isValid(filename) {
+		if (cacheOnly) return true;
+		if (this.integrityMatches && filename.startsWith(myNodeModules))
+			return true;
+		try {
+			return Buffer.compare(
+				this.modules.get(filename),
+				fs.readFileSync(filename)
+			);
+		} catch (e) {
+			return false;
 		}
+	}
+
+	track(filename) {
 		this.currentModules.add(filename);
+	}
+
+	addModule(filename, source) {
+		this.modules.set(filename, source);
+		this.scriptSource = undefined;
+		this.scriptSourceBuffer = undefined;
+		this.lifetime = 0;
+	}
+
+	addResolve(key, result) {
+		this.resolve.set(key, result);
+		this.lifetime = 0;
 	}
 
 	getInfo(cachedData) {
@@ -433,7 +527,9 @@ class Voo {
 				this.modules.size
 			} modules ${formatSize(
 				this.scriptSourceBuffer.length
-			)} Source Code ${formatSize(cachedData.length)} Cached Data`;
+			)} Source Code ${formatSize(cachedData.length)} Cached Data ${
+				this.resolve.size
+			} Resolve Entries`;
 		}
 	}
 }
@@ -501,24 +597,20 @@ require.extensions[".js"] = (module, filename) => {
 		}
 	}
 	try {
-		let content;
-		if (!cacheOnly) content = fs.readFileSync(filename);
-		const cacheEntry = cache.get(filename);
-		if (
-			cacheEntry !== undefined &&
-			(cacheOnly || Buffer.compare(cacheEntry.source, content) === 0)
-		) {
+		moduleToVoo.set(module, currentVoo);
+		currentVoo.track(filename);
+		const cacheEntry = currentVoo.cache.get(filename);
+		if (cacheEntry !== undefined && currentVoo.isValid(filename)) {
 			const dirname = path.dirname(filename);
 			const require = makeRequireFunction(module);
 			const exports = module.exports;
-			currentVoo.track(filename);
-			cacheEntry.fn.call(exports, exports, require, module, filename, dirname);
+			cacheEntry.call(exports, exports, require, module, filename, dirname);
 		} else {
 			if (log >= 2 && cacheEntry !== undefined) {
 				console.warn(`[node-voo] ${filename} has changed`);
 			}
-			if (cacheOnly) content = fs.readFileSync(filename);
-			currentVoo.track(filename, content);
+			const content = fs.readFileSync(filename);
+			currentVoo.addModule(filename, content);
 			module._compile(stripBOM(content.toString("utf-8")), filename);
 		}
 		if (newVoo) {
@@ -532,3 +624,40 @@ require.extensions[".js"] = (module, filename) => {
 		}
 	}
 };
+
+if (nodeModulesIntegrity) {
+	const cacheableModules = new WeakMap();
+
+	const originalResolveFilename = Module._resolveFilename;
+	Module._resolveFilename = (request, parent, isMain, options) => {
+		if (!cacheOnly) {
+			let cacheable = cacheableModules.get(parent);
+			if (cacheable === undefined) {
+				cacheable = parent.filename.startsWith(myNodeModules);
+				cacheableModules.set(parent, cacheable);
+			}
+			if (!cacheable) {
+				return originalResolveFilename(request, parent, isMain, options);
+			}
+		}
+		const key = request + path.dirname(parent.filename);
+		const cacheEntry = resolveCache.get(key);
+		if (cacheEntry !== undefined) {
+			return cacheEntry;
+		}
+		const result = originalResolveFilename(request, parent, isMain, options);
+		if (!cacheOnly) {
+			const resultCacheable = result.startsWith(myNodeModules);
+			if (!resultCacheable) {
+				return result;
+			}
+		}
+		resolveCache.set(key, result);
+		const voo = moduleToVoo.get(parent);
+		if (voo !== undefined) {
+			voo.addResolve(key, result);
+		}
+
+		return result;
+	};
+}

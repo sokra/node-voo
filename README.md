@@ -39,6 +39,13 @@ require("<real-entry>");
 ## Command Line
 
 ```sh
+yarn add node-voo
+yarn node-voo <real-entry> <arguments>
+```
+
+-or-
+
+```sh
 npm install -g node-voo
 node-voo <real-entry> <arguments>
 ```
@@ -96,6 +103,13 @@ npx node-voo <real-entry> <arguments>
 
 It's only possible to pass options via environment variables:
 
+- `NODE_VOO_YARN=true`: Trust `node_modules/.yarn-integrity` to agressively cache resolving and modules in node_modules. Requirements:
+  - Only use Yarn.
+  - Do not modify files in node_modules manually.
+- `NODE_VOO_NPM=true`: Trust `package-lock.json` to agressively cache resolving and modules in node_modules. Requirements:
+  - Only use Npm.
+  - Do not modify files in node_modules manually.
+  - Do not run node-voo between changes to `package-lock.json` and `npm i`. i. e. when switching branches, etc.
 - `NODE_VOO_LOGLEVEL=warning`: Display warnings on console when
   - cached data was rejected by v8
   - not all Voos can be persisted due to time limit
@@ -112,6 +126,6 @@ It's only possible to pass options via environment variables:
   - a Voo is restored (including count and size info)
   - a Voo is persisted (including count and size info)
   - the process exit and all Voos are persisted (including timing info)
-- `NODE_VOO_CACHE_ONLY=true`: Always use the cache and never check if real files have changed
+- `NODE_VOO_CACHE_ONLY=true`: Always use the cache and never check if real files have changed. Also allows to cache resolving.
 - `NODE_VOO_NO_PERSIST=true`: Never persist Voos (Use only when cache files already reached the optimum)
 - `NODE_VOO_PERSIST_LIMIT=<number>`: Time limit in milliseconds, how long node-voo persists Voos on process exit
