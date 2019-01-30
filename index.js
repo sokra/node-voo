@@ -320,7 +320,7 @@ class Voo {
 					this.resolve
 				);
 				this.integrityMatches = true;
-			} else {
+			} else if (numberOfResolveEntries > 0) {
 				this.lifetime = 0;
 			}
 
@@ -476,9 +476,11 @@ class Voo {
 		if (this.integrityMatches && filename.startsWith(myNodeModules))
 			return true;
 		try {
-			return Buffer.compare(
-				this.modules.get(filename),
-				fs.readFileSync(filename)
+			return (
+				Buffer.compare(
+					this.modules.get(filename),
+					fs.readFileSync(filename)
+				) === 0
 			);
 		} catch (e) {
 			return false;

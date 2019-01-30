@@ -40,14 +40,14 @@ require("<real-entry>");
 
 ```sh
 yarn add node-voo
-yarn node-voo <real-entry> <arguments>
+yarn node-voo --yarn <real-entry> <arguments>
 ```
 
 -or-
 
 ```sh
 npm install -g node-voo
-node-voo <real-entry> <arguments>
+node-voo --npm <real-entry> <arguments>
 ```
 
 -or-
@@ -101,7 +101,7 @@ npx node-voo <real-entry> <arguments>
 
 ## Options
 
-It's only possible to pass options via environment variables:
+It's possible to pass options via environment variables:
 
 - `NODE_VOO_YARN=true`: Trust `node_modules/.yarn-integrity` to agressively cache resolving and modules in node_modules. Requirements:
   - Only use Yarn.
@@ -129,3 +129,18 @@ It's only possible to pass options via environment variables:
 - `NODE_VOO_CACHE_ONLY=true`: Always use the cache and never check if real files have changed. Also allows to cache resolving.
 - `NODE_VOO_NO_PERSIST=true`: Never persist Voos (Use only when cache files already reached the optimum)
 - `NODE_VOO_PERSIST_LIMIT=<number>`: Time limit in milliseconds, how long node-voo persists Voos on process exit
+
+When using the CLI it's also possible to pass some options with argument:
+
+- `node-voo --yarn` = `NODE_VOO_YARN`
+- `node-voo --npm` = `NODE_VOO_NPM`
+- `node-voo --cache-only` = `NODE_VOO_CACHE_ONLY`
+- `node-voo --no-persist` = `NODE_VOO_NO_PERSIST`
+- `node-voo --warning` = `NODE_VOO_LOGLEVEL=warning`
+- `node-voo --info` = `NODE_VOO_LOGLEVEL=info`
+- `node-voo --verbose` = `NODE_VOO_LOGLEVEL=verbose`
+
+Performance hints:
+
+- Use `yarn` resp. `npm` optimization via `NODE_VOO_YARN` resp. `NODE_VOO_NPM` to enable caching for resolving.
+- Code has to run a few times to reach performance optimum.
