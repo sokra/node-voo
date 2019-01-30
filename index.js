@@ -632,6 +632,9 @@ if (nodeModulesIntegrity || cacheOnly) {
 
 	const originalResolveFilename = Module._resolveFilename;
 	Module._resolveFilename = (request, parent, isMain, options) => {
+		if (isMain || !parent) {
+			return originalResolveFilename(request, parent, isMain, options);
+		}
 		if (!cacheOnly) {
 			let cacheable = cacheableModules.get(parent);
 			if (cacheable === undefined) {
