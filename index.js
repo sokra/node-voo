@@ -2,12 +2,34 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
+const HEADER_SIZE = 28;
+
 const loglevel = process.env.NODE_VOO_LOGLEVEL;
 const log = { $warning: 1, $info: 2, $verbose: 3 }["$" + loglevel] | 0;
 
 const cacheOnly = !!process.env.NODE_VOO_CACHE_ONLY;
 const noPersist = !!process.env.NODE_VOO_NO_PERSIST;
 const persistLimit = +process.env.NODE_VOO_PERSIST_LIMIT || 100;
+const cacheDir =
+	process.env.NODE_VOO_CACHE_DIRECTORY ||
+	path.join(require("os").tmpdir(), "node-voo");
+
+try {
+	fs.mkdirSync(cacheDir);
+} catch (e) {}
+
+const HASH_LENGTH = 13;
+const hashBuf = Buffer.allocUnsafe(HASH_LENGTH);
+const getHash = str => {
+	hashBuf.fill(0);
+	let x = 0;
+	for (let i = 0; i < str.length; i++) {
+		const c = str.charCodeAt(i);
+		hashBuf[x] += c;
+		x = (x + i + c) % HASH_LENGTH;
+	}
+	return hashBuf.toString("hex");
+};
 
 const stripBOM = content => {
 	if (content.charCodeAt(0) === 0xfeff) {
@@ -108,12 +130,9 @@ const cache = new Map();
 const allVoos = [];
 
 class Voo {
-	constructor(dirname, rootFile) {
-		this.rootFile = rootFile;
-		this.filename = path.join(
-			dirname,
-			"." + path.basename(rootFile) + ".node-voo-cache"
-		);
+	constructor(name) {
+		this.name = name;
+		this.filename = path.join(cacheDir, getHash(name));
 		this.created = Date.now() / 1000;
 		this.started = 0;
 		this.lifetime = 0;
@@ -142,14 +161,17 @@ class Voo {
 			}
 		}
 		const fd = fs.openSync(this.filename, "w");
-		const header = Buffer.allocUnsafe(24);
-		header.writeInt32LE(1, 0, true); // version
+		const header = Buffer.allocUnsafe(HEADER_SIZE);
+		const nameBuffer = Buffer.from(this.name, "utf-8");
+		header.writeInt32LE(2, 0, true); // version
 		header.writeDoubleLE(this.created, 4, true);
 		header.writeInt32LE(this.lifetime, 8, true);
-		header.writeInt32LE(this.modules.size, 12, true);
-		header.writeInt32LE(scriptSource ? scriptSource.length : 0, 16, true);
-		header.writeInt32LE(cachedData ? cachedData.length : 0, 20, true);
+		header.writeInt32LE(nameBuffer.length, 12, true);
+		header.writeInt32LE(this.modules.size, 16, true);
+		header.writeInt32LE(scriptSource ? scriptSource.length : 0, 20, true);
+		header.writeInt32LE(cachedData ? cachedData.length : 0, 24, true);
 		writeSync(fd, header);
+		writeSync(fd, nameBuffer);
 		const moduleInfo = Buffer.allocUnsafe(this.modules.size * 8);
 		const buffers = [moduleInfo];
 		let pos = 0;
@@ -173,7 +195,7 @@ class Voo {
 		fs.closeSync(fd);
 		if (log >= 3) {
 			console.log(
-				`[node-voo] ${this.filename} persisted ${this.getInfo(cachedData)}`
+				`[node-voo] ${this.name} persisted ${this.getInfo(cachedData)}`
 			);
 		}
 	}
@@ -182,20 +204,33 @@ class Voo {
 		try {
 			// Read cache file
 			const file = fs.readFileSync(this.filename);
-			if (file.length < 24) throw new Error("Incorrect cache file size");
-			if (file.readInt32LE(0, true) !== 1)
+			if (file.length < HEADER_SIZE)
+				throw new Error("Incorrect cache file size");
+			if (file.readInt32LE(0, true) !== 2)
 				throw new Error("Incorrect cache file version");
 			this.created = file.readInt32LE(4, true);
 			this.lifetime = file.readInt32LE(8, true);
-			const numberOfModules = file.readInt32LE(12, true);
-			const scriptSourceSize = file.readInt32LE(16, true);
-			const cachedDataSize = file.readInt32LE(20, true);
-			if (file.length < 24 + numberOfModules * 8)
+			const nameSize = file.readInt32LE(12, true);
+			const numberOfModules = file.readInt32LE(16, true);
+			const scriptSourceSize = file.readInt32LE(20, true);
+			const cachedDataSize = file.readInt32LE(24, true);
+			if (file.length < HEADER_SIZE + nameSize + numberOfModules * 8) {
 				throw new Error("Incorrect cache file size");
-			let pos = 24 + numberOfModules * 8;
+			}
+			const name = file
+				.slice(HEADER_SIZE, HEADER_SIZE + nameSize)
+				.toString("utf-8");
+			if (name !== this.name) {
+				throw new Error("Hash conflict");
+			}
+			let modulesListStart = HEADER_SIZE + nameSize;
+			let pos = modulesListStart + numberOfModules * 8;
 			for (let i = 0; i < numberOfModules; i++) {
-				const filenameLength = file.readInt32LE(24 + i * 8, true);
-				const sourceLength = file.readInt32LE(28 + i * 8, true);
+				const filenameLength = file.readInt32LE(modulesListStart + i * 8, true);
+				const sourceLength = file.readInt32LE(
+					modulesListStart + 4 + i * 8,
+					true
+				);
 				const filename = file
 					.slice(pos, pos + filenameLength)
 					.toString("utf-8");
@@ -227,9 +262,7 @@ class Voo {
 				importModuleDynamically: undefined
 			});
 			if (log >= 1 && this.script.cachedDataRejected) {
-				console.warn(
-					`[node-voo] ${this.filename} cached data was rejected by v8`
-				);
+				console.warn(`[node-voo] ${this.name} cached data was rejected by v8`);
 			}
 			const result = this.script.runInThisContext();
 
@@ -240,20 +273,23 @@ class Voo {
 			}
 
 			this.restored = true;
+			this.started = Date.now();
 
-			if (log >= 3) {
-				console.log(
-					`[node-voo] ${this.filename} restored ${this.getInfo(cachedData)}`
-				);
+			if (log >= 2) {
+				if (cachedData === undefined || log >= 3) {
+					console.log(
+						`[node-voo] ${this.name} restored ${this.getInfo(cachedData)}`
+					);
+				}
 			}
 		} catch (e) {
 			if (e.code !== "ENOENT") {
 				if (log >= 1) {
-					console.log(`[node-voo] ${this.filename} failed to restore: ${e}`);
+					console.log(`[node-voo] ${this.name} failed to restore: ${e}`);
 				}
 			} else {
 				if (log >= 2) {
-					console.log(`[node-voo] ${this.filename} no cache file`);
+					console.log(`[node-voo] ${this.name} no cache file`);
 				}
 			}
 		}
@@ -286,7 +322,7 @@ class Voo {
 			if (removableSize > 10240 || removableModules.size > 100) {
 				if (log >= 2) {
 					console.log(
-						`[node-voo] ${this.filename} restructured Voo ${
+						`[node-voo] ${this.name} restructured Voo ${
 							removableModules.size
 						} modules (${Math.ceil(removableSize / 1024)} kiB) removed`
 					);
@@ -300,7 +336,7 @@ class Voo {
 				this.currentModules = undefined;
 			} else if (log >= 3 && removableModules.size > 0) {
 				console.log(
-					`[node-voo] ${this.filename} restructuring not worth it: ${
+					`[node-voo] ${this.name} restructuring not worth it: ${
 						removableModules.size
 					} modules (${Math.ceil(removableSize / 102.4) /
 						10} kiB) could be removed`
@@ -318,7 +354,9 @@ class Voo {
 	}
 
 	start() {
-		this.started = Date.now();
+		if (this.started === 0) {
+			this.started = Date.now();
+		}
 		if (!noPersist) {
 			if (this.scriptSource === undefined) {
 				this.persist();
@@ -333,7 +371,7 @@ class Voo {
 		if (this.timeout) {
 			clearTimeout(this.timeout);
 		}
-		const persistIn = Math.min(Math.max(10000, this.lifetime), 60 * 60 * 1000);
+		const persistIn = Math.min(Math.max(1000, this.lifetime), 60 * 60 * 1000);
 		this.timeout = setTimeout(() => {
 			this.persist();
 			if (this.scriptSource !== undefined) {
@@ -421,16 +459,30 @@ if (!noPersist) {
 	});
 }
 
-let currentVoo = undefined;
+let currentVoos = [];
 
 require.extensions[".js"] = (module, filename) => {
-	const newVoo = currentVoo === undefined || !currentVoo.canAdd(filename);
-	const dirname = path.dirname(filename);
-	let oldVoo;
-	if (newVoo) {
-		oldVoo = currentVoo;
-		currentVoo = new Voo(dirname, filename);
+	let newVoo = false;
+	let currentVoo;
+	if (currentVoos.length === 0) {
+		currentVoo = new Voo(filename);
 		currentVoo.tryRestore(module.constructor);
+		currentVoos.push(currentVoo);
+		newVoo = true;
+	} else {
+		for (const voo of currentVoos) {
+			if (voo.canAdd(filename)) {
+				currentVoo = voo;
+				break;
+			}
+		}
+		if (currentVoo === undefined) {
+			currentVoo = new Voo(
+				currentVoos[currentVoos.length - 1].name + "|" + filename
+			);
+			currentVoo.tryRestore(module.constructor);
+			currentVoos.push(currentVoo);
+		}
 	}
 	try {
 		let content;
@@ -440,6 +492,7 @@ require.extensions[".js"] = (module, filename) => {
 			cacheEntry !== undefined &&
 			(cacheOnly || Buffer.compare(cacheEntry.source, content) === 0)
 		) {
+			const dirname = path.dirname(filename);
 			const require = makeRequireFunction(module);
 			const exports = module.exports;
 			currentVoo.track(filename);
@@ -453,11 +506,13 @@ require.extensions[".js"] = (module, filename) => {
 			module._compile(stripBOM(content.toString("utf-8")), filename);
 		}
 		if (newVoo) {
-			currentVoo.start();
+			for (const voo of currentVoos) {
+				voo.start();
+			}
 		}
 	} finally {
 		if (newVoo) {
-			currentVoo = oldVoo;
+			currentVoos.length = 0;
 		}
 	}
 };

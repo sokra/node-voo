@@ -4,7 +4,7 @@ Source Caching for Node.js
 
 - Creates v8 cache data for executed javascript files.
 - Groups javascript files that are used together. (These groups are called "Voo"s.)
-- Stores a cache file next to the root javascript file of each group.
+- Stores a cache file into the systems temp directory.
 - Puts lazy required files into separate cache files.
 - Learns which modules are required conditionally and puts them into separate cache files.
 - Improves startup speed of node.js applications after a few runs
@@ -70,7 +70,7 @@ node <real-entry> <arguments>
 -or-
 
 ```sh
-export NODE_OPTIONS=-r node-voo
+export NODE_OPTIONS="-r node-voo"
 node <real-entry> <arguments>
 ```
 
@@ -104,6 +104,7 @@ It's only possible to pass options via environment variables:
   - any warning from above occurs
   - cache can't be used because source file changed
   - cache file was not found and will probably be created
+  - a unoptimized Voo is restored (including count info)
   - a Voo is reorganized due to detected conditional requires
 - `NODE_VOO_LOGLEVEL=verbose`: Display warnings and info on console when
   - any warning or info from above occurs
