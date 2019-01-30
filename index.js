@@ -267,9 +267,14 @@ class Voo {
 			const result = this.script.runInThisContext();
 
 			// File cache with data
-			for (const [filename, source] of this.modules) {
-				const fn = result["$" + filename];
-				cache.set(filename, { source, fn });
+			if (this.modules.size === 1) {
+				const [filename, source] = this.modules.entries().next().value;
+				cache.set(filename, { source, fn: result });
+			} else {
+				for (const [filename, source] of this.modules) {
+					const fn = result["$" + filename];
+					cache.set(filename, { source, fn });
+				}
 			}
 
 			this.restored = true;
@@ -297,15 +302,24 @@ class Voo {
 
 	createScriptSource(Module) {
 		// Create optimizes source with cached data
-		this.scriptSource = `(function() {\nvar __node_voo_result = {};\n${Array.from(
-			this.modules
-		)
-			.map(([filename, source]) => {
-				return `__node_voo_result[${JSON.stringify(
-					"$" + filename
-				)}] = ${Module.wrap(stripShebang(stripBOM(source.toString("utf-8"))))}`;
-			})
-			.join("\n")}\nreturn __node_voo_result;\n})();`;
+		if (this.modules.size === 1) {
+			const source = this.modules.values().next().value;
+			this.scriptSource = Module.wrap(
+				stripShebang(stripBOM(source.toString("utf-8")))
+			);
+		} else {
+			this.scriptSource = `(function() {\nvar __node_voo_result = {};\n${Array.from(
+				this.modules
+			)
+				.map(([filename, source]) => {
+					return `__node_voo_result[${JSON.stringify(
+						"$" + filename
+					)}] = ${Module.wrap(
+						stripShebang(stripBOM(source.toString("utf-8")))
+					)}`;
+				})
+				.join("\n")}\nreturn __node_voo_result;\n})();`;
+		}
 		this.scriptSourceBuffer = undefined;
 	}
 
@@ -346,7 +360,7 @@ class Voo {
 	}
 
 	flipCoin() {
-		if (this.lifetime === 0) return true;
+		if (this.lifetime === 0 || this.started === 0) return true;
 		this.mayRestructure();
 		const runtime = Date.now() - this.started;
 		const p = runtime / this.lifetime;
@@ -358,10 +372,8 @@ class Voo {
 			this.started = Date.now();
 		}
 		if (!noPersist) {
-			if (this.scriptSource === undefined) {
-				this.persist();
-			} else {
-				allVoos.push(this);
+			allVoos.push(this);
+			if (this.scriptSource !== undefined) {
 				this.updateTimeout();
 			}
 		}
@@ -428,20 +440,24 @@ class Voo {
 
 if (!noPersist) {
 	process.on("exit", () => {
+		for (const voo of currentVoos) {
+			allVoos.push(voo);
+		}
+		currentVoos.length = 0;
+
 		let n = 0;
+		const voos = allVoos.filter(voo => voo.flipCoin());
 		const start = Date.now();
-		while (allVoos.length > 0) {
-			const random = Math.floor(Math.random() * allVoos.length);
-			const voo = allVoos[random];
-			if (voo.flipCoin()) {
-				voo.persist();
-				n++;
-			}
-			allVoos.splice(random, 1);
+		while (voos.length > 0) {
+			const random = Math.floor(Math.random() * voos.length);
+			const voo = voos[random];
+			voo.persist();
+			n++;
+			voos.splice(random, 1);
 			if (Date.now() - start >= persistLimit) break;
 		}
 		if (log >= 1) {
-			if (allVoos.length === 0) {
+			if (voos.length === 0) {
 				if (log >= 3 && n > 0) {
 					console.log(
 						`[node-voo] ${n} Voos persisted in ${Date.now() - start}ms`
@@ -450,7 +466,7 @@ if (!noPersist) {
 			} else {
 				console.warn(
 					`[node-voo] ${
-						allVoos.length
+						voos.length
 					} Voos not persisted because time limit reached (took ${Date.now() -
 						start}ms)`
 				);
