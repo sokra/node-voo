@@ -311,7 +311,7 @@ class Voo {
 				cachedData = file.slice(pos, pos + cachedDataSize);
 				pos += cachedDataSize;
 			}
-			if (integrityMatches) {
+			if (cacheOnly || integrityMatches) {
 				readInfoAndData(
 					file,
 					pos,
@@ -627,7 +627,7 @@ require.extensions[".js"] = (module, filename) => {
 	}
 };
 
-if (nodeModulesIntegrity) {
+if (nodeModulesIntegrity || cacheOnly) {
 	const cacheableModules = new WeakMap();
 
 	const originalResolveFilename = Module._resolveFilename;
