@@ -333,6 +333,7 @@ class Voo {
 			});
 			if (log >= 1 && this.script.cachedDataRejected) {
 				console.warn(`[node-voo] ${this.name} cached data was rejected by v8`);
+				this.lifetime = 0;
 			}
 			const result = this.script.runInThisContext();
 
