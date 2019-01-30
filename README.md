@@ -39,21 +39,58 @@ require("<real-entry>");
 ## Command Line
 
 ```sh
-node -r node-voo <real-entry>
-```
-
-or
-
-```sh
 npm install -g node-voo
-node-voo <real-entry>
+node-voo <real-entry> <arguments>
 ```
 
-or
+-or-
 
 ```sh
-npx node-voo <real-entry>
+yarn global add node-voo
+node-voo <real-entry> <arguments>
 ```
+
+-or-
+
+```sh
+NODE_OPTIONS="-r node-voo" node <real-entry> <arguments>
+```
+
+(\*nix only)
+
+-or-
+
+```sh
+set NODE_OPTIONS=-r node-voo
+node <real-entry> <arguments>
+```
+
+(windows only, stays active for all futures `node` calls too)
+
+-or-
+
+```sh
+export NODE_OPTIONS=-r node-voo
+node <real-entry> <arguments>
+```
+
+(\*nix only, , stays active for all futures `node` calls too)
+
+-or-
+
+```sh
+node -r node-voo <real-entry> <arguments>
+```
+
+(doesn't capture child processes)
+
+-or-
+
+```sh
+npx node-voo <real-entry> <arguments>
+```
+
+(npx has a performance overhead)
 
 ## Options
 
