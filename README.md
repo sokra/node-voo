@@ -23,8 +23,9 @@ This run uses optimized code which was generated on the second run.
 
 Note that code might get reoptimized when captured type info changes. When this happens cache files are updated.
 
-When the process exits, Voos are persisted in random order until the time limit has reached (default 100ms).
-The random order ensures that all Voos get eventually persisted without increasing the exit delay.
+When the process exits, Voos are persisted by a probablilty process until the time limit has reached (default 100ms).
+The probablilty process ensures that all Voos get eventually persisted without increasing the exit delay too much.
+As the lifetime of the Voo increases, the probablility of persisting decreases.
 
 Voos are also persisted everytime their lifetime has doubled (minimum 10s, maximum 1h).
 

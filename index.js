@@ -122,58 +122,23 @@ class Voo {
 		this.currentModules = new Set();
 		this.scriptSource = undefined;
 		this.scriptSourceBuffer = undefined;
-		this.cachedData = undefined;
 		this.script = undefined;
+		this.restored = false;
 	}
 
 	persist() {
-		if (this.currentModules) {
-			const removableModules = new Set();
-			let removableSize = 0;
-			for (const [filename, source] of this.modules) {
-				if (!this.currentModules.has(filename)) {
-					removableModules.add(filename);
-					removableSize += source.length;
-				}
-			}
-			if (removableSize > 10240 || removableModules.size > 100) {
-				if (log >= 2) {
-					console.log(
-						`[node-voo] ${this.filename} restructured Voo ${
-							removableModules.size
-						} modules (${Math.ceil(removableSize / 1024)} kiB) removed`
-					);
-				}
-				for (const filename of removableModules) {
-					this.modules.delete(filename);
-				}
-				this.scriptSource = undefined;
-				this.scriptSourceBuffer = undefined;
-				this.currentModules = undefined;
-			} else if (log >= 3 && removableModules.size > 0) {
-				console.log(
-					`[node-voo] ${this.filename} restructuring not worth it: ${
-						removableModules.size
-					} modules (${Math.ceil(removableSize / 102.4) /
-						10} kiB) could be removed`
-				);
-			}
-		}
+		this.mayRestructure();
 		let cachedData;
 		let scriptSource;
 		if (this.scriptSource !== undefined) {
 			if (this.started) {
 				this.lifetime += Date.now() - this.started;
 			}
-			scriptSource =
+			this.scriptSourceBuffer =
 				this.scriptSourceBuffer || Buffer.from(this.scriptSource, "utf-8");
+			scriptSource = this.scriptSourceBuffer;
 			if (this.script) {
 				cachedData = this.script.createCachedData();
-				if (this.cachedData && cachedData.length === this.cachedData.length) {
-					// Do not persist when cached data size didn't change
-					// It's never perfect equal so this has to be good enough
-					return;
-				}
 			}
 		}
 		const fd = fs.openSync(this.filename, "w");
@@ -208,11 +173,7 @@ class Voo {
 		fs.closeSync(fd);
 		if (log >= 3) {
 			console.log(
-				`[node-voo] ${this.filename} persisted ${this.modules.size} modules ${
-					scriptSource ? Math.ceil(scriptSource.length / 1024) : 0
-				} kiB Source Code ${
-					cachedData ? Math.ceil(cachedData.length / 1024) : 0
-				} kiB V8 Cached Data`
+				`[node-voo] ${this.filename} persisted ${this.getInfo(cachedData)}`
 			);
 		}
 	}
@@ -255,7 +216,6 @@ class Voo {
 			let cachedData = undefined;
 			if (cachedDataSize > 0) {
 				cachedData = file.slice(pos, pos + cachedDataSize);
-				this.cachedData = cachedData;
 				pos += scriptSourceSize;
 			}
 
@@ -279,15 +239,11 @@ class Voo {
 				cache.set(filename, { source, fn });
 			}
 
+			this.restored = true;
+
 			if (log >= 3) {
 				console.log(
-					`[node-voo] ${this.filename} restored ${this.modules.size} modules ${
-						this.scriptSourceBuffer
-							? Math.ceil(this.scriptSourceBuffer.length / 1024)
-							: 0
-					} kiB Source Code ${
-						cachedData ? Math.ceil(cachedData.length / 1024) : 0
-					} kiB V8 Cached Data`
+					`[node-voo] ${this.filename} restored ${this.getInfo(cachedData)}`
 				);
 			}
 		} catch (e) {
@@ -317,6 +273,50 @@ class Voo {
 		this.scriptSourceBuffer = undefined;
 	}
 
+	mayRestructure() {
+		if (this.currentModules !== undefined) {
+			const removableModules = new Set();
+			let removableSize = 0;
+			for (const [filename, source] of this.modules) {
+				if (!this.currentModules.has(filename)) {
+					removableModules.add(filename);
+					removableSize += source.length;
+				}
+			}
+			if (removableSize > 10240 || removableModules.size > 100) {
+				if (log >= 2) {
+					console.log(
+						`[node-voo] ${this.filename} restructured Voo ${
+							removableModules.size
+						} modules (${Math.ceil(removableSize / 1024)} kiB) removed`
+					);
+				}
+				for (const filename of removableModules) {
+					this.modules.delete(filename);
+				}
+				this.scriptSource = undefined;
+				this.scriptSourceBuffer = undefined;
+				this.lifetime = 0;
+				this.currentModules = undefined;
+			} else if (log >= 3 && removableModules.size > 0) {
+				console.log(
+					`[node-voo] ${this.filename} restructuring not worth it: ${
+						removableModules.size
+					} modules (${Math.ceil(removableSize / 102.4) /
+						10} kiB) could be removed`
+				);
+			}
+		}
+	}
+
+	flipCoin() {
+		if (this.lifetime === 0) return true;
+		this.mayRestructure();
+		const runtime = Date.now() - this.started;
+		const p = runtime / this.lifetime;
+		return Math.random() < p;
+	}
+
 	start() {
 		this.started = Date.now();
 		if (!noPersist) {
@@ -333,10 +333,7 @@ class Voo {
 		if (this.timeout) {
 			clearTimeout(this.timeout);
 		}
-		const persistIn = Math.min(
-			Math.max(10000, this.lifetime * 2),
-			60 * 60 * 1000
-		);
+		const persistIn = Math.min(Math.max(10000, this.lifetime), 60 * 60 * 1000);
 		this.timeout = setTimeout(() => {
 			this.persist();
 			if (this.scriptSource !== undefined) {
@@ -347,7 +344,7 @@ class Voo {
 	}
 
 	canAdd(filename) {
-		return this.scriptSource === undefined || this.modules.has(filename);
+		return !this.restored || this.modules.has(filename);
 	}
 
 	track(filename, source) {
@@ -359,23 +356,57 @@ class Voo {
 		}
 		this.currentModules.add(filename);
 	}
+
+	getInfo(cachedData) {
+		const formatTime = t => {
+			if (t > 2000) {
+				return `${Math.floor(t / 1000)}s`;
+			} else if (t > 500) {
+				return `${Math.floor(t / 100) / 10}s`;
+			} else {
+				return `${t}ms`;
+			}
+		};
+		const formatSize = s => {
+			if (s > 1024 * 1024) {
+				return `${Math.floor(s / 1024 / 102.4) / 10} MiB`;
+			} else if (s > 10240) {
+				return `${Math.floor(s / 1024)} kiB`;
+			} else {
+				return `${Math.floor(s / 102.4) / 10} kiB`;
+			}
+		};
+		if (cachedData === undefined) {
+			return `[unoptimized] ${this.modules.size} modules`;
+		} else {
+			return `[optimized for ${formatTime(this.lifetime)}] ${
+				this.modules.size
+			} modules ${formatSize(
+				this.scriptSourceBuffer.length
+			)} Source Code ${formatSize(cachedData.length)} Cached Data`;
+		}
+	}
 }
 
 if (!noPersist) {
 	process.on("exit", () => {
+		let n = 0;
 		const start = Date.now();
 		while (allVoos.length > 0) {
 			const random = Math.floor(Math.random() * allVoos.length);
 			const voo = allVoos[random];
-			voo.persist();
+			if (voo.flipCoin()) {
+				voo.persist();
+				n++;
+			}
 			allVoos.splice(random, 1);
 			if (Date.now() - start >= persistLimit) break;
 		}
 		if (log >= 1) {
 			if (allVoos.length === 0) {
-				if (log >= 3) {
+				if (log >= 3 && n > 0) {
 					console.log(
-						`[node-voo] all Voos persisted in ${Date.now() - start}ms`
+						`[node-voo] ${n} Voos persisted in ${Date.now() - start}ms`
 					);
 				}
 			} else {
