@@ -1,6 +1,6 @@
 {
   "name": "node-voo",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Source Caching for Node.js",
   "main": "index.js",
   "bin": "cli.js",
