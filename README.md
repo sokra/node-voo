@@ -114,6 +114,7 @@ It's possible to pass options via environment variables:
   - cached data was rejected by v8
   - not all Voos can be persisted due to time limit
   - cache can't be restore due to an error
+  - cache can't be persisted due to an error
 - `NODE_VOO_LOGLEVEL=info`: Display warnings and info on console when
   - any warning from above occurs
   - cache can't be used because source file changed

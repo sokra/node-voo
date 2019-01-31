@@ -222,50 +222,64 @@ class Voo {
 	}
 
 	persist() {
-		this.mayRestructure();
-		let cachedData;
-		let scriptSource;
-		if (this.scriptSource !== undefined) {
-			if (this.started) {
-				this.lifetime += Date.now() - this.started;
+		const tempFile = this.filename + "~" + process.pid;
+		try {
+			this.mayRestructure();
+			let cachedData;
+			let scriptSource;
+			if (this.scriptSource !== undefined) {
+				if (this.started) {
+					this.lifetime += Date.now() - this.started;
+				}
+				this.scriptSourceBuffer =
+					this.scriptSourceBuffer || Buffer.from(this.scriptSource, "utf-8");
+				scriptSource = this.scriptSourceBuffer;
+				if (this.script) {
+					cachedData = this.script.createCachedData();
+				}
 			}
-			this.scriptSourceBuffer =
-				this.scriptSourceBuffer || Buffer.from(this.scriptSource, "utf-8");
-			scriptSource = this.scriptSourceBuffer;
-			if (this.script) {
-				cachedData = this.script.createCachedData();
-			}
-		}
-		const fd = fs.openSync(this.filename, "w");
-		const header = Buffer.allocUnsafe(HEADER_SIZE);
-		const nameBuffer = Buffer.from(this.name, "utf-8");
-		header.writeInt32LE(FORMAT_VERSION, 0, true);
-		header.writeDoubleLE(this.created, 4, true);
-		header.writeInt32LE(this.lifetime, 8, true);
-		header.writeInt32LE(nameBuffer.length, 12, true);
-		header.writeInt32LE(this.modules.size, 16, true);
-		header.writeInt32LE(scriptSource ? scriptSource.length : 0, 20, true);
-		header.writeInt32LE(cachedData ? cachedData.length : 0, 24, true);
-		header.writeInt32LE(this.resolve.size, 28, true);
-		writeSync(fd, header);
-		writeSync(fd, nameBuffer);
-		writeSync(
-			fd,
-			nodeModulesIntegrity || Buffer.allocUnsafe(HASH_LENGTH).fill(0)
-		);
-		writeInfoAndData(fd, this.modules, v => v);
-		if (scriptSource) {
-			writeSync(fd, scriptSource);
-		}
-		if (cachedData) {
-			writeSync(fd, cachedData);
-		}
-		writeInfoAndData(fd, this.resolve, str => Buffer.from(str, "utf-8"));
-		fs.closeSync(fd);
-		if (log >= 3) {
-			console.log(
-				`[node-voo] ${this.name} persisted ${this.getInfo(cachedData)}`
+			const fd = fs.openSync(tempFile, "w");
+			const header = Buffer.allocUnsafe(HEADER_SIZE);
+			const nameBuffer = Buffer.from(this.name, "utf-8");
+			header.writeInt32LE(FORMAT_VERSION, 0, true);
+			header.writeDoubleLE(this.created, 4, true);
+			header.writeInt32LE(this.lifetime, 8, true);
+			header.writeInt32LE(nameBuffer.length, 12, true);
+			header.writeInt32LE(this.modules.size, 16, true);
+			header.writeInt32LE(scriptSource ? scriptSource.length : 0, 20, true);
+			header.writeInt32LE(cachedData ? cachedData.length : 0, 24, true);
+			header.writeInt32LE(this.resolve.size, 28, true);
+			writeSync(fd, header);
+			writeSync(fd, nameBuffer);
+			writeSync(
+				fd,
+				nodeModulesIntegrity || Buffer.allocUnsafe(HASH_LENGTH).fill(0)
 			);
+			writeInfoAndData(fd, this.modules, v => v);
+			if (scriptSource) {
+				writeSync(fd, scriptSource);
+			}
+			if (cachedData) {
+				writeSync(fd, cachedData);
+			}
+			writeInfoAndData(fd, this.resolve, str => Buffer.from(str, "utf-8"));
+			fs.closeSync(fd);
+			try {
+				fs.unlinkSync(this.filename);
+			} catch (e) {}
+			fs.renameSync(tempFile, this.filename);
+			if (log >= 3) {
+				console.log(
+					`[node-voo] ${this.name} persisted ${this.getInfo(cachedData)}`
+				);
+			}
+		} catch (e) {
+			try {
+				fs.unlinkSync(tempFile);
+			} catch (e) {}
+			if (log >= 1) {
+				console.log(`[node-voo] ${this.name} failed to persist: ${e.stack}`);
+			}
 		}
 	}
 
