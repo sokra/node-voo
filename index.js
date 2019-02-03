@@ -14,9 +14,13 @@ const trustNpm = !!process.env.NODE_VOO_NPM;
 const cacheOnly = !!process.env.NODE_VOO_CACHE_ONLY;
 const noPersist = !!process.env.NODE_VOO_NO_PERSIST;
 const persistLimit = +process.env.NODE_VOO_PERSIST_LIMIT || 100;
-const cacheDir =
-	process.env.NODE_VOO_CACHE_DIRECTORY ||
-	path.join(require("os").tmpdir(), "node-voo");
+const cacheDir = process.env.NODE_VOO_CACHE_DIRECTORY
+	? path.resolve(process.env.NODE_VOO_CACHE_DIRECTORY)
+	: path.join(require("os").tmpdir(), "node-voo");
+
+if (log >= 3) {
+	console.log(`[node-voo] enabled (cache directory: ${cacheDir})`);
+}
 
 try {
 	fs.mkdirSync(cacheDir);
@@ -647,7 +651,7 @@ if (nodeModulesIntegrity || cacheOnly) {
 
 	const originalResolveFilename = Module._resolveFilename;
 	Module._resolveFilename = (request, parent, isMain, options) => {
-		if (isMain || !parent) {
+		if (isMain || !parent || !parent.filename) {
 			return originalResolveFilename(request, parent, isMain, options);
 		}
 		if (!cacheOnly) {

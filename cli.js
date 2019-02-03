@@ -28,7 +28,7 @@ w: while (i < process.argv.length) {
 			break w;
 	}
 }
-process.argv.splice(1, i - 2);
+process.argv.splice(1, Math.max(1, i - 2));
 const index = require.resolve("./index");
 process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ""} -r "${index}"`;
 require(index);

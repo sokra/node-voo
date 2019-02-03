@@ -145,3 +145,74 @@ Performance hints:
 
 - Use `yarn` resp. `npm` optimization via `NODE_VOO_YARN` resp. `NODE_VOO_NPM` to enable caching for resolving.
 - Code has to run a few times to reach performance optimum.
+
+## Examples
+
+All examples were run with `NODE_VOO_YARN=true NODE_VOO_LOGLEVEL=verbose NODE_OPTIONS=-r .../node-voo/index.js`:
+
+### eslint
+
+```
+> node -e "console.time(); require('eslint'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/eslint/lib/api.js no cache file
+default: 459.409ms
+[node-voo] .../node_modules/eslint/lib/api.js persisted [unoptimized] 170 modules
+[node-voo] 1 Voos persisted in 33ms
+
+> node -e "console.time(); require('eslint'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/eslint/lib/api.js restored [unoptimized] 170 modules
+default: 268.427ms
+[node-voo] .../node_modules/eslint/lib/api.js persisted [optimized for 133ms] 170 modules 1.8 MiB Source Code 651 kiB Cached Data 220 Resolve Entries
+[node-voo] 1 Voos persisted in 83ms
+
+> node -e "console.time(); require('eslint'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/eslint/lib/api.js restored [optimized for 133ms] 170 modules 1.8 MiB Source Code 651 kiB Cached Data 220 Resolve Entries
+default: 122.383ms
+[node-voo] .../node_modules/eslint/lib/api.js persisted [optimized for 220ms] 170 modules 1.8 MiB Source Code 651 kiB Cached Data 220 Resolve Entries
+[node-voo] 1 Voos persisted in 50ms
+
+> node -e "console.time(); require('eslint'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/eslint/lib/api.js restored [optimized for 220ms] 170 modules 1.8 MiB Source Code 651 kiB Cached Data 220 Resolve Entries
+default: 123.616ms
+
+> node -e "console.time(); require('eslint'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/eslint/lib/api.js restored [optimized for 220ms] 170 modules 1.8 MiB Source Code 651 kiB Cached Data 220 Resolve Entries
+default: 131.611ms
+```
+
+### babel-core
+
+```
+> node -e "console.time(); require('babel-core'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/babel-core/index.js no cache file
+default: 901.891ms
+[node-voo] .../node_modules/babel-core/index.js persisted [unoptimized] 487 modules
+[node-voo] 1 Voos persisted in 53ms
+
+> node -e "console.time(); require('babel-core'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/babel-core/index.js restored [unoptimized] 487 modules
+default: 243.541ms
+[node-voo] .../node_modules/babel-core/index.js persisted [optimized for 122ms] 487 modules 1.1 MiB Source Code 750 kiB Cached Data 633 Resolve Entries
+[node-voo] 1 Voos persisted in 88ms
+
+> node -e "console.time(); require('babel-core'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/babel-core/index.js restored [optimized for 122ms] 487 modules 1.1 MiB Source Code 750 kiB Cached Data 633 Resolve Entries
+default: 140.512ms
+[node-voo] .../node_modules/babel-core/index.js persisted [optimized for 223ms] 487 modules 1.1 MiB Source Code 750 kiB Cached Data 633 Resolve Entries
+[node-voo] 1 Voos persisted in 78ms
+
+> node -e "console.time(); require('babel-core'); console.timeEnd()"
+[node-voo] enabled (cache directory: ...)
+[node-voo] .../node_modules/babel-core/index.js restored [optimized for 223ms] 487 modules 1.1 MiB Source Code 750 kiB Cached Data 633 Resolve Entries
+default: 140.497ms
+[node-voo] .../node_modules/babel-core/index.js persisted [optimized for 325ms] 487 modules 1.1 MiB Source Code 750 kiB Cached Data 633 Resolve Entries
+[node-voo] 1 Voos persisted in 88ms
+```
