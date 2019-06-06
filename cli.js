@@ -30,7 +30,8 @@ w: while (i < process.argv.length) {
 }
 process.argv.splice(1, Math.max(1, i - 2));
 const index = require.resolve("./index");
-process.env.NODE_OPTIONS = `${process.env.NODE_OPTIONS || ""} -r "${index}"`;
+const old = process.env.NODE_OPTIONS || "";
+process.env.NODE_OPTIONS = `${old} -r ${JSON.stringify(index)}`;
 require(index);
 if (process.argv.length > 1) {
 	require(require("path").resolve(process.cwd(), process.argv[1]));
