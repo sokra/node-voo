@@ -28,7 +28,7 @@ try {
 
 const HASH_LENGTH = 13;
 const hashBuf = Buffer.allocUnsafe(HASH_LENGTH);
-const getHash = str => {
+const getHash = (str) => {
 	hashBuf.fill(0);
 	let x = 0;
 	for (let i = 0; i < str.length; i++) {
@@ -80,14 +80,14 @@ if (trustYarn && myNodeModules) {
 	} catch (e) {}
 }
 
-const stripBOM = content => {
+const stripBOM = (content) => {
 	if (content.charCodeAt(0) === 0xfeff) {
 		content = content.slice(1);
 	}
 	return content;
 };
 
-const stripShebang = content => {
+const stripShebang = (content) => {
 	// Remove shebang
 	var contLen = content.length;
 	if (contLen >= 2) {
@@ -128,7 +128,7 @@ function validateString(value) {
 	}
 }
 
-const makeRequireFunction = module => {
+const makeRequireFunction = (module) => {
 	const Module = module.constructor;
 
 	function require(path) {
@@ -205,6 +205,10 @@ const writeInfoAndData = (fd, map, valueFn) => {
 const resolveCache = new Map();
 const moduleToVoo = new Map();
 const allVoos = [];
+let uniqueId = process.pid + "";
+try {
+	uniqueId += require("worker_threads").threadId;
+} catch (e) {}
 
 class Voo {
 	constructor(name) {
@@ -226,7 +230,7 @@ class Voo {
 	}
 
 	persist() {
-		const tempFile = this.filename + "~" + process.pid;
+		const tempFile = this.filename + "~" + uniqueId;
 		try {
 			this.mayRestructure();
 			let cachedData;
@@ -259,19 +263,21 @@ class Voo {
 				fd,
 				nodeModulesIntegrity || Buffer.allocUnsafe(HASH_LENGTH).fill(0)
 			);
-			writeInfoAndData(fd, this.modules, v => v);
+			writeInfoAndData(fd, this.modules, (v) => v);
 			if (scriptSource) {
 				writeSync(fd, scriptSource);
 			}
 			if (cachedData) {
 				writeSync(fd, cachedData);
 			}
-			writeInfoAndData(fd, this.resolve, str => Buffer.from(str, "utf-8"));
+			writeInfoAndData(fd, this.resolve, (str) => Buffer.from(str, "utf-8"));
 			fs.closeSync(fd);
 			try {
 				fs.unlinkSync(this.filename);
 			} catch (e) {}
-			fs.renameSync(tempFile, this.filename);
+			try {
+				fs.renameSync(tempFile, this.filename);
+			} catch (e) {}
 			if (log >= 3) {
 				console.log(
 					`[node-voo] ${this.name} persisted ${this.getInfo(cachedData)}`
@@ -314,7 +320,7 @@ class Voo {
 				integrityMatches = Buffer.compare(hash, nodeModulesIntegrity) === 0;
 			}
 			pos += HASH_LENGTH;
-			pos = readInfoAndData(file, pos, numberOfModules, v => v, this.modules);
+			pos = readInfoAndData(file, pos, numberOfModules, (v) => v, this.modules);
 			let scriptSourceBuffer;
 			if (scriptSourceSize > 0) {
 				scriptSourceBuffer = file.slice(pos, pos + scriptSourceSize);
@@ -334,7 +340,7 @@ class Voo {
 					file,
 					pos,
 					numberOfResolveEntries,
-					buf => buf.toString("utf-8"),
+					(buf) => buf.toString("utf-8"),
 					this.resolve
 				);
 				this.integrityMatches = true;
@@ -347,7 +353,7 @@ class Voo {
 				filename: this.filename + ".js",
 				lineOffset: 0,
 				displayErrors: true,
-				importModuleDynamically: undefined
+				importModuleDynamically: undefined,
 			});
 			if (log >= 1 && this.script.cachedDataRejected) {
 				console.warn(`[node-voo] ${this.name} cached data was rejected by v8`);
@@ -445,8 +451,9 @@ class Voo {
 				console.log(
 					`[node-voo] ${this.name} restructuring not worth it: ${
 						removableModules.size
-					} modules (${Math.ceil(removableSize / 102.4) /
-						10} kiB) could be removed`
+					} modules (${
+						Math.ceil(removableSize / 102.4) / 10
+					} kiB) could be removed`
 				);
 			}
 		}
@@ -523,7 +530,7 @@ class Voo {
 	}
 
 	getInfo(cachedData) {
-		const formatTime = t => {
+		const formatTime = (t) => {
 			if (t > 2000) {
 				return `${Math.floor(t / 1000)}s`;
 			} else if (t > 500) {
@@ -532,7 +539,7 @@ class Voo {
 				return `${t}ms`;
 			}
 		};
-		const formatSize = s => {
+		const formatSize = (s) => {
 			if (s > 1024 * 1024) {
 				return `${Math.floor(s / 1024 / 102.4) / 10} MiB`;
 			} else if (s > 10240) {
@@ -563,7 +570,7 @@ if (!noPersist) {
 		currentVoos.length = 0;
 
 		let n = 0;
-		const voos = allVoos.filter(voo => voo.flipCoin());
+		const voos = allVoos.filter((voo) => voo.flipCoin());
 		const start = Date.now();
 		while (voos.length > 0) {
 			const random = Math.floor(Math.random() * voos.length);
@@ -584,8 +591,9 @@ if (!noPersist) {
 				console.warn(
 					`[node-voo] ${
 						voos.length
-					} Voos not persisted because time limit reached (took ${Date.now() -
-						start}ms)`
+					} Voos not persisted because time limit reached (took ${
+						Date.now() - start
+					}ms)`
 				);
 			}
 		}
