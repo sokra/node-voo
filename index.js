@@ -23,7 +23,7 @@ if (log >= 3) {
 }
 
 try {
-	fs.mkdirSync(cacheDir);
+	fs.mkdirSync(cacheDir, { recursive: true });
 } catch (e) {}
 
 const HASH_LENGTH = 13;
@@ -207,7 +207,7 @@ const moduleToVoo = new Map();
 const allVoos = [];
 let uniqueId = process.pid + "";
 try {
-	uniqueId += require("worker_threads").threadId;
+	uniqueId += "-" + require("worker_threads").threadId;
 } catch (e) {}
 
 class Voo {
