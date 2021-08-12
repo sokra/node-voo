@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const url = require("url");
 const Module = require("module");
 
 const HEADER_SIZE = 32;
@@ -14,13 +15,20 @@ const trustNpm = !!process.env.NODE_VOO_NPM;
 const cacheOnly = !!process.env.NODE_VOO_CACHE_ONLY;
 const noPersist = !!process.env.NODE_VOO_NO_PERSIST;
 const persistLimit = +process.env.NODE_VOO_PERSIST_LIMIT || 100;
+const tempDir = process.env.NODE_VOO_TEMP_DIRECTORY
+	? path.resolve(process.env.NODE_VOO_TEMP_DIRECTORY)
+	: path.join(require("os").tmpdir(), "node-voo");
 const cacheDir = process.env.NODE_VOO_CACHE_DIRECTORY
 	? path.resolve(process.env.NODE_VOO_CACHE_DIRECTORY)
-	: path.join(require("os").tmpdir(), "node-voo");
+	: tempDir;
 
 if (log >= 3) {
 	console.log(`[node-voo] enabled (cache directory: ${cacheDir})`);
 }
+
+try {
+	fs.mkdirSync(tempDir, { recursive: true });
+} catch (e) {}
 
 try {
 	fs.mkdirSync(cacheDir, { recursive: true });
@@ -41,9 +49,10 @@ const getHash = (str) => {
 
 // Find root node_modules
 let myBase, myNodeModules;
-const dirnameMatch = /((?:\/\.config\/yarn\/|\\Yarn\\Data\\)(?:link|global)|\/usr\/local\/lib|\\nodejs)?[/\\]node_modules[/\\]/.exec(
-	__dirname
-);
+const dirnameMatch =
+	/((?:\/\.config\/yarn\/|\\Yarn\\Data\\)(?:link|global)|\/usr\/local\/lib|\\nodejs)?[/\\]node_modules[/\\]/.exec(
+		__dirname
+	);
 if (dirnameMatch && !dirnameMatch[1]) {
 	myBase = __dirname.slice(0, dirnameMatch.index);
 	if (fs.existsSync(path.join(myBase, "package.json"))) {
@@ -213,7 +222,8 @@ try {
 class Voo {
 	constructor(name) {
 		this.name = name;
-		this.filename = path.join(cacheDir, getHash(name).toString("hex"));
+		this.hash = getHash(name).toString("hex");
+		this.filename = path.join(cacheDir, this.hash);
 		this.created = Date.now() / 1000;
 		this.started = 0;
 		this.lifetime = 0;
@@ -230,14 +240,16 @@ class Voo {
 	}
 
 	persist() {
-		const tempFile = this.filename + "~" + uniqueId;
+		const tempFile = path.join(tempDir, this.hash + "~" + uniqueId);
 		try {
 			this.mayRestructure();
 			let cachedData;
 			let scriptSource;
 			if (this.scriptSource !== undefined) {
 				if (this.started) {
-					this.lifetime += Date.now() - this.started;
+					const now = Date.now();
+					this.lifetime += now - this.started;
+					this.started = now;
 				}
 				this.scriptSourceBuffer =
 					this.scriptSourceBuffer || Buffer.from(this.scriptSource, "utf-8");
@@ -363,10 +375,10 @@ class Voo {
 
 			// File cache with data
 			if (this.modules.size === 1) {
-				const [filename, source] = this.modules.entries().next().value;
+				const filename = this.modules.keys().next().value;
 				this.cache.set(filename, result);
 			} else {
-				for (const [filename, source] of this.modules) {
+				for (const filename of this.modules.keys()) {
 					const fn = result["$" + filename];
 					this.cache.set(filename, fn);
 				}
@@ -389,7 +401,9 @@ class Voo {
 		} catch (e) {
 			if (e.code !== "ENOENT") {
 				if (log >= 1) {
-					console.log(`[node-voo] ${this.name} failed to restore: ${e.stack}`);
+					console.log(
+						`[node-voo] ${this.name} (${this.filename}) failed to restore: ${e.stack}`
+					);
 				}
 			} else {
 				if (log >= 2) {
@@ -493,8 +507,8 @@ class Voo {
 		this.timeout.unref();
 	}
 
-	canAdd(filename) {
-		return !this.restored || this.modules.has(filename);
+	has(filename) {
+		return this.modules.has(filename);
 	}
 
 	isValid(filename) {
@@ -605,24 +619,49 @@ let currentVoos = [];
 require.extensions[".js"] = (module, filename) => {
 	let newVoo = false;
 	let currentVoo;
+	let content;
+	let contentString;
 	if (currentVoos.length === 0) {
+		if (
+			/\bimport\b/.test(
+				(contentString = (content = fs.readFileSync(filename)).toString(
+					"utf-8"
+				))
+			)
+		) {
+			// This can't be cached
+			module._compile(stripBOM(contentString), filename);
+			return;
+		}
 		currentVoo = new Voo(filename);
 		currentVoo.tryRestore(module.constructor);
 		currentVoos.push(currentVoo);
 		newVoo = true;
 	} else {
 		for (const voo of currentVoos) {
-			if (voo.canAdd(filename)) {
+			if (voo.has(filename)) {
 				currentVoo = voo;
 				break;
 			}
 		}
 		if (currentVoo === undefined) {
-			currentVoo = new Voo(
-				currentVoos[currentVoos.length - 1].name + "|" + filename
-			);
-			currentVoo.tryRestore(module.constructor);
-			currentVoos.push(currentVoo);
+			if (
+				(contentString = (content = fs.readFileSync(filename)).toString(
+					"utf-8"
+				)).includes("import")
+			) {
+				// This can't be cached
+				module._compile(stripBOM(contentString), filename);
+				return;
+			}
+			const lastVoo = currentVoos[currentVoos.length - 1];
+			if (!lastVoo.restored) {
+				currentVoo = lastVoo;
+			} else {
+				currentVoo = new Voo(lastVoo.hash + "|" + filename);
+				currentVoo.tryRestore(module.constructor);
+				currentVoos.push(currentVoo);
+			}
 		}
 	}
 	try {
@@ -638,9 +677,12 @@ require.extensions[".js"] = (module, filename) => {
 			if (log >= 2 && cacheEntry !== undefined) {
 				console.warn(`[node-voo] ${filename} has changed`);
 			}
-			const content = fs.readFileSync(filename);
+			if (content === undefined) {
+				content = fs.readFileSync(filename);
+				contentString = content.toString("utf-8");
+			}
 			currentVoo.addModule(filename, content);
-			module._compile(stripBOM(content.toString("utf-8")), filename);
+			module._compile(stripBOM(contentString), filename);
 		}
 		if (newVoo) {
 			for (const voo of currentVoos) {

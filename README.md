@@ -130,6 +130,8 @@ It's possible to pass options via environment variables:
 - `NODE_VOO_CACHE_ONLY=true`: Always use the cache and never check if real files have changed. Also allows to cache resolving.
 - `NODE_VOO_NO_PERSIST=true`: Never persist Voos (Use only when cache files already reached the optimum)
 - `NODE_VOO_PERSIST_LIMIT=<number>`: Time limit in milliseconds, how long node-voo persists Voos on process exit
+- `NODE_VOO_CACHE_DIRECTORY`: Directory to store cache files. Defaults to `NODE_VOO_TEMP_DIRECTORY`.
+- `NODE_VOO_TEMP_DIRECTORY`: Directory to store temporary files. Defaults to os temp directory.
 
 When using the CLI it's also possible to pass some options with argument:
 
